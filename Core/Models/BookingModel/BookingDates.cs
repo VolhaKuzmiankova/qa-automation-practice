@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Core.Models.Booking;
+namespace Core.Models.BookingModel;
 
 public class BookingDates
 {

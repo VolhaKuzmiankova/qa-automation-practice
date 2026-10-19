@@ -1,42 +1,29 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
-using Core.Models;
-using Core.Models.Booking;
+using Core.Factories;
+using Core.Models.BookingModel;
 using Newtonsoft.Json.Linq;
 
 namespace ApiTests;
 
 public class RestfulBookerTests
 {
-    HttpClient _client;
-    private readonly string _baseUrl = "https://restful-booker.herokuapp.com";
+    private const string BaseUrl = "https://restful-booker.herokuapp.com";
+    private readonly HttpClient _client = new() { BaseAddress = new Uri(BaseUrl) };
     private Booking _booking;
     private int _bookingId;
 
     [OneTimeSetUp]
-    public void CreateBooking()
+    public async Task CreateBooking()
     {
-        _client = new HttpClient { BaseAddress = new Uri(_baseUrl) };
         _client.DefaultRequestHeaders.Add("Accept", "application/json");
 
-        _booking = new Booking
-        {
-            Firstname = "Jim",
-            Lastname = "Brown",
-            TotalPrice = 111,
-            DepositPaid = true,
-            BookingDates = new BookingDates { Checkin = "2018-01-01", Checkout = "2019-01-01" },
-            AdditionalNeeds = "Breakfast"
-        };
+        _booking = BookingFactory.Create();
 
-        var response = _client.PostAsJsonAsync("/booking", _booking)
-            .GetAwaiter()
-            .GetResult();
+        var response = await _client.PostAsJsonAsync("/booking", _booking);
         response.EnsureSuccessStatusCode();
 
-        var created = response.Content.ReadFromJsonAsync<CreateBookingResponse>()
-            .GetAwaiter()
-            .GetResult();
+        var created = await response.Content.ReadFromJsonAsync<CreateBookingResponse>();
 
         _bookingId = created!.BookingId;
     }
@@ -45,127 +32,98 @@ public class RestfulBookerTests
     [TestCase("admin1", "password123", false)]
     [TestCase("admin", "password121", false)]
     [TestCase("", "", false)]
-    public void AuthTest(string username, string password, bool isCredentialsValid)
+    public async Task AuthTest(string username, string password, bool isCredentialsValid)
     {
-        var response = _client.PostAsJsonAsync("/auth", new { username, password })
-            .GetAwaiter()
-            .GetResult();
+        var response = await _client.PostAsJsonAsync("/auth", new { username, password });
 
-        var json = response.Content.ReadAsStringAsync()
-            .GetAwaiter()
-            .GetResult();
+        var json = await response.Content.ReadAsStringAsync();
 
         var token = JObject.Parse(json)["token"]?.ToString();
-
         Assert.That(token, isCredentialsValid ? Is.Not.Null : Is.Null);
     }
 
     [Test]
-    public void GetPingTest()
+    public async Task GetPingTest()
     {
-        var response = _client.GetAsync("/ping")
-            .GetAwaiter()
-            .GetResult();
-
+        var response = await _client.GetAsync("/ping");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Created));
     }
 
     [Test]
-    public void GetBookingTest()
+    public async Task GetBookingTest()
     {
-        var response = _client.GetAsync("/booking")
-            .GetAwaiter()
-            .GetResult();
-
+        var response = await _client.GetAsync("/booking");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
-        var json = response.Content.ReadAsStringAsync()
-            .GetAwaiter()
-            .GetResult();
+        var json = await response.Content.ReadAsStringAsync();
 
         var bookingList = JArray.Parse(json);
         Assert.That(bookingList, Is.Not.Empty);
     }
 
     [Test]
-    public void GetBookingByNameFilterTest()
+    public async Task GetBookingByNameFilterTest()
     {
-        var response = _client.GetAsync($"/booking?firstname={_booking.Firstname}&lastname={_booking.Lastname}")
-            .GetAwaiter()
-            .GetResult();
-
+        var response = await _client.GetAsync($"/booking?firstname={Uri.EscapeDataString(_booking.Firstname)}&lastname={Uri.EscapeDataString(_booking.Lastname)}");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
-        var json = response.Content.ReadAsStringAsync()
-            .GetAwaiter()
-            .GetResult();
+        var json = await response.Content.ReadAsStringAsync();
 
-        var bookingList = JArray.Parse(json);
-        Assert.That(bookingList, Is.Not.Empty);
+        var bookingIds = JArray.Parse(json).Select(b => b["bookingid"]?.Value<int>());
+        Assert.That(bookingIds, Does.Contain(_bookingId));
     }
 
     [Test]
-    public void GetBookingByDateFilterTest()
+    public async Task GetBookingByDateFilterTest()
     {
         // the API treats checkin as strictly greater than the filter value, so filter from the day before (Bug)
         var checkin = DateTime.Parse(_booking.BookingDates.Checkin).AddDays(-1).ToString("yyyy-MM-dd");
-        var response = _client.GetAsync($"/booking?checkin={checkin}&checkout={_booking.BookingDates.Checkout}")
-            .GetAwaiter()
-            .GetResult();
-
+        var response = await _client.GetAsync($"/booking?checkin={Uri.EscapeDataString(checkin)}&checkout={Uri.EscapeDataString(_booking.BookingDates.Checkout)}");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
-        var json = response.Content.ReadAsStringAsync()
-            .GetAwaiter()
-            .GetResult();
-
-        var bookingList = JArray.Parse(json);
-        Assert.That(bookingList, Is.Not.Empty);
+        var json = await response.Content.ReadAsStringAsync();
+        var bookingIds = JArray.Parse(json).Select(b => b["bookingid"]?.Value<int>());
+        Assert.That(bookingIds, Does.Contain(_bookingId));
     }
 
     [Test]
-    public void GetBookingByIdTest()
+    public async Task GetBookingByIdTest()
     {
-        var response = _client.GetAsync($"/booking/{_bookingId}")
-            .GetAwaiter()
-            .GetResult();
-
+        var response = await _client.GetAsync($"/booking/{_bookingId}");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
-        var booking = response.Content.ReadFromJsonAsync<Booking>()
-            .GetAwaiter()
-            .GetResult();
-
+        var booking = await response.Content.ReadFromJsonAsync<Booking>();
         Assert.That(booking, Is.Not.Null);
         Assert.That(booking, Is.EqualTo(_booking).UsingPropertiesComparer());
     }
 
     [Test]
-    public void GetBookingByIncorrectIdTest()
+    public async Task GetBookingByIncorrectIdTest()
     {
-        var response = _client.GetAsync("/booking/88888888888")
-            .GetAwaiter()
-            .GetResult();
-
+        var response = await _client.GetAsync("/booking/88888888888");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
     
     [OneTimeTearDown]
-    public void DeleteBooking()
+    public async Task DeleteBooking()
     {
-        var authResponse = _client.PostAsJsonAsync("/auth", new { username = "admin", password = "password123" })
-            .GetAwaiter()
-            .GetResult();
-        var token = JObject.Parse(authResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult())["token"]?.ToString();
+        try
+        {
+            if (_bookingId == 0) return;
 
-        var request = new HttpRequestMessage(HttpMethod.Delete, $"/booking/{_bookingId}");
-        request.Headers.Add("Cookie", $"token={token}");
+            var authResponse = await _client.PostAsJsonAsync("/auth", new { username = "admin", password = "password123" });
+            var token = JObject.Parse(await authResponse.Content.ReadAsStringAsync())["token"]?.ToString();
+            Assert.That(token, Is.Not.Null.And.Not.Empty, "Auth did not return a token, cannot delete the booking");
 
-        var response = _client.SendAsync(request)
-            .GetAwaiter()
-            .GetResult();
-        response.EnsureSuccessStatusCode();
+            var request = new HttpRequestMessage(HttpMethod.Delete, $"/booking/{_bookingId}");
+            request.Headers.Add("Cookie", $"token={token}");
 
-        _client.Dispose();
+            var response = await _client.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+        }
+        finally
+        {
+            _client.Dispose();
+        }
     }
 }
